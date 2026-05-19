@@ -116,15 +116,19 @@ class PuzzleGenerator {
 
   static bool _isSolvedGridValid(
       List<List<int>> grid, int size, int boxR, int boxC) {
-    final expected = List.generate(size, (i) => i + 1).toSet();
+    // Check uniqueness: each row/col/box must contain 'size' distinct values.
+    // Because the backtracker only places values in [1..size], having 'size'
+    // unique values is equivalent to containing every value exactly once.
+    // (Dart Set does not override ==, so set1 == set2 is always reference
+    //  equality — use .length instead.)
 
     // Rows
     for (int r = 0; r < size; r++) {
-      if (grid[r].toSet() != expected) return false;
+      if (grid[r].toSet().length != size) return false;
     }
     // Columns
     for (int c = 0; c < size; c++) {
-      if (List.generate(size, (r) => grid[r][c]).toSet() != expected) {
+      if (List.generate(size, (r) => grid[r][c]).toSet().length != size) {
         return false;
       }
     }
@@ -138,7 +142,7 @@ class PuzzleGenerator {
               vals.add(grid[r][c]);
             }
           }
-          if (vals != expected) return false;
+          if (vals.length != boxR * boxC) return false;
         }
       }
     }
