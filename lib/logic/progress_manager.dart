@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/difficulty.dart';
@@ -14,7 +13,6 @@ class ProgressManager extends ChangeNotifier {
   static const _boardKey       = 'leaderboard';
   static String _completedKey(Difficulty d) => 'completed_${d.name}';
   static String _hsKey(Difficulty d, int lvl) => 'hs_${d.name}_$lvl';
-  static String _mistakesKey(Difficulty d, int lvl) => 'mx_${d.name}_$lvl';
 
   int _stars   = 0;
   int _gems    = 0;

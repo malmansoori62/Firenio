@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../logic/game_controller.dart';
 import '../models/difficulty.dart';
-import '../models/element_type.dart';
 import '../themes/app_theme.dart';
 import 'cell_widget.dart';
 

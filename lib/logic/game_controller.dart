@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import '../models/cell.dart';
 import '../models/difficulty.dart';
 import '../models/element_type.dart';
 import '../models/puzzle.dart';
