@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../logic/game_controller.dart';
+import '../logic/progress_manager.dart';
+import '../models/difficulty.dart';
 import '../themes/app_theme.dart';
 import '../widgets/element_palette.dart';
 import '../widgets/game_grid.dart';
@@ -16,59 +18,75 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen> {
   String? _toastMsg;
-  bool _conflictFlash = false;
+  bool    _conflictFlash = false;
+  bool    _navigating    = false;
 
   @override
   void initState() {
     super.initState();
-    // Listen for game completion or special events
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<GameController>().addListener(_onGameChange);
     });
   }
 
   void _onGameChange() {
+    if (!mounted) return;
     final ctrl = context.read<GameController>();
 
-    if (ctrl.isComplete) {
-      // Short delay so the last cell can animate before navigating
-      Future.delayed(const Duration(milliseconds: 400), () {
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => ChangeNotifierProvider.value(
-                value: ctrl,
-                child: const ResultScreen(),
-              ),
-            ),
-          );
-        }
-      });
+    // Consume one-shot messages immediately so timer ticks don't re-fire them
+    final allianceMsg = ctrl.consumeAllianceMsg();
+    final conflict    = ctrl.consumeConflict();
+
+    if (ctrl.isComplete && !_navigating) {
+      _navigating = true;
+      Future.delayed(const Duration(milliseconds: 350), _goToResult);
       return;
     }
 
-    // Alliance / conflict toasts
-    if (ctrl.lastAllianceMsg != null) {
-      _showToast(ctrl.lastAllianceMsg!, isGold: true);
-    } else if (ctrl.lastWasConflict) {
-      _showConflictFlash();
-    }
+    if (allianceMsg != null) _showToast(allianceMsg);
+    if (conflict)            _flashConflict();
   }
 
-  void _showToast(String msg, {bool isGold = false}) {
+  Future<void> _goToResult() async {
+    if (!mounted) return;
+    final ctrl     = context.read<GameController>();
+    final progress = context.read<ProgressManager>();
+
+    await progress.completeLevel(
+      difficulty:   ctrl.puzzle!.difficulty,
+      levelNumber:  ctrl.levelNumber ?? 1,
+      score:        ctrl.score,
+      mistakes:     ctrl.mistakes,
+      elapsed:      ctrl.elapsed,
+      playerName:   'Player',
+    );
+
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: ctrl),
+            ChangeNotifierProvider.value(value: progress),
+          ],
+          child: const ResultScreen(),
+        ),
+      ),
+    );
+  }
+
+  void _showToast(String msg) {
     if (!mounted) return;
     setState(() => _toastMsg = msg);
-    Future.delayed(const Duration(milliseconds: 1800), () {
-      if (mounted) setState(() => _toastMsg = null);
-    });
+    Future.delayed(const Duration(milliseconds: 1800),
+        () { if (mounted) setState(() => _toastMsg = null); });
   }
 
-  void _showConflictFlash() {
+  void _flashConflict() {
     if (!mounted) return;
     setState(() => _conflictFlash = true);
-    Future.delayed(const Duration(milliseconds: 400), () {
-      if (mounted) setState(() => _conflictFlash = false);
-    });
+    Future.delayed(const Duration(milliseconds: 350),
+        () { if (mounted) setState(() => _conflictFlash = false); });
   }
 
   @override
@@ -79,13 +97,13 @@ class _GameScreenState extends State<GameScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ctrl = context.watch<GameController>();
+    final ctrl   = context.watch<GameController>();
     final puzzle = ctrl.puzzle;
     if (puzzle == null) return const Scaffold();
 
     return Scaffold(
       backgroundColor: _conflictFlash
-          ? AppTheme.conflictRed.withOpacity(0.08)
+          ? AppTheme.conflictRed.withOpacity(0.07)
           : AppTheme.background,
       appBar: AppBar(
         title: Text(
@@ -94,10 +112,29 @@ class _GameScreenState extends State<GameScreen> {
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         actions: [
+          // Streak badge
+          if (context.watch<ProgressManager>().streak >= 3)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Center(
+                child: Text(
+                  '🔥 ×${context.watch<ProgressManager>().streak}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.accentGold,
+                  ),
+                ),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Restart',
-            onPressed: () => ctrl.loadPuzzle(puzzle.difficulty),
+            onPressed: () {
+              _navigating = false;
+              ctrl.loadPuzzle(puzzle.difficulty,
+                  levelNumber: ctrl.levelNumber ?? 1);
+            },
           ),
         ],
       ),
@@ -107,14 +144,12 @@ class _GameScreenState extends State<GameScreen> {
             Column(
               children: [
                 const ScoreBar(),
-                // Progress indicator
                 LinearProgressIndicator(
                   value: puzzle.correctCount / puzzle.totalCells,
                   backgroundColor: AppTheme.surfaceAlt,
                   color: AppTheme.correctGreen,
                   minHeight: 3,
                 ),
-                // Grid takes remaining space
                 Expanded(
                   child: Center(
                     child: Padding(
@@ -129,15 +164,12 @@ class _GameScreenState extends State<GameScreen> {
                 const ElementPalette(),
               ],
             ),
-            // Alliance / conflict toast
             if (_toastMsg != null)
               Positioned(
-                top: 80,
+                top: 72,
                 left: 0,
                 right: 0,
-                child: Center(
-                  child: _Toast(message: _toastMsg!),
-                ),
+                child: Center(child: _Toast(message: _toastMsg!)),
               ),
           ],
         ),
@@ -148,7 +180,6 @@ class _GameScreenState extends State<GameScreen> {
 
 class _Toast extends StatelessWidget {
   final String message;
-
   const _Toast({required this.message});
 
   @override

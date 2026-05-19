@@ -7,30 +7,36 @@ import '../models/puzzle.dart';
 import 'puzzle_generator.dart';
 
 class GameController extends ChangeNotifier {
-  Puzzle? _puzzle;
-  int? _selectedRow;
-  int? _selectedCol;
-  int _score = 0;
-  int _hints = 3;
-  int _combo = 0;
-  bool _isComplete = false;
-  Duration _elapsed = Duration.zero;
+  Puzzle?  _puzzle;
+  int?     _selectedRow;
+  int?     _selectedCol;
+  int      _score     = 0;
+  int      _hints     = 3;
+  int      _combo     = 0;
+  int      _mistakes  = 0;
+  bool     _isComplete = false;
+  Duration _elapsed   = Duration.zero;
   DateTime? _startTime;
-  Timer? _timer;
-  // Tracks cell-pair keys where alliance bonus has already been awarded
-  final Set<String> _alliancePairs = {};
-  // Last placed cell coords for overlay animations (exposed to UI)
-  String? lastAllianceMsg;
-  bool lastWasConflict = false;
+  Timer?   _timer;
+  int?     _levelNumber;
 
-  Puzzle?  get puzzle       => _puzzle;
-  int?     get selectedRow  => _selectedRow;
-  int?     get selectedCol  => _selectedCol;
-  int      get score        => _score;
-  int      get hints        => _hints;
-  int      get combo        => _combo;
-  Duration get elapsed      => _elapsed;
-  bool     get isComplete   => _isComplete;
+  final Set<String> _alliancePairs = {};
+
+  // One-shot flags consumed by the UI after each placement, then cleared.
+  // They are NOT re-fired on timer ticks because we null them out immediately.
+  String? _pendingAllianceMsg;
+  bool    _pendingConflict = false;
+
+  Puzzle?  get puzzle        => _puzzle;
+  int?     get selectedRow   => _selectedRow;
+  int?     get selectedCol   => _selectedCol;
+  int      get score         => _score;
+  int      get hints         => _hints;
+  int      get combo         => _combo;
+  int      get mistakes      => _mistakes;
+  Duration get elapsed       => _elapsed;
+  bool     get isComplete    => _isComplete;
+  int?     get levelNumber   => _levelNumber;
 
   String get elapsedDisplay {
     final m = _elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -42,23 +48,34 @@ class GameController extends ChangeNotifier {
   // Lifecycle
   // ---------------------------------------------------------------------------
 
-  void loadPuzzle(Difficulty difficulty) {
+  void loadPuzzle(Difficulty difficulty, {int levelNumber = 1}) {
+    _levelNumber = levelNumber;
     _puzzle = PuzzleGenerator.generate(difficulty);
-    _reset();
+    _fullReset();
     notifyListeners();
   }
 
-  void _reset() {
-    _selectedRow = null;
-    _selectedCol = null;
-    _score = 0;
-    _hints = 3;
-    _combo = 0;
-    _isComplete = false;
-    _elapsed = Duration.zero;
+  void loadDailyPuzzle() {
+    final now = DateTime.now();
+    final seed = now.year * 10000 + now.month * 100 + now.day;
+    _levelNumber = 0; // 0 = daily
+    _puzzle = PuzzleGenerator.generateWithSeed(Difficulty.hard, seed);
+    _fullReset();
+    notifyListeners();
+  }
+
+  void _fullReset() {
+    _selectedRow   = null;
+    _selectedCol   = null;
+    _score         = 0;
+    _hints         = 3;
+    _combo         = 0;
+    _mistakes      = 0;
+    _isComplete    = false;
+    _elapsed       = Duration.zero;
     _alliancePairs.clear();
-    lastAllianceMsg = null;
-    lastWasConflict = false;
+    _pendingAllianceMsg = null;
+    _pendingConflict    = false;
     _startTime = DateTime.now();
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -87,6 +104,22 @@ class GameController extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------------
+  // Consume one-shot messages (called by UI after reading them)
+  // ---------------------------------------------------------------------------
+
+  String? consumeAllianceMsg() {
+    final msg = _pendingAllianceMsg;
+    _pendingAllianceMsg = null;
+    return msg;
+  }
+
+  bool consumeConflict() {
+    final v = _pendingConflict;
+    _pendingConflict = false;
+    return v;
+  }
+
+  // ---------------------------------------------------------------------------
   // Element placement
   // ---------------------------------------------------------------------------
 
@@ -96,25 +129,23 @@ class GameController extends ChangeNotifier {
     if (cell.isGiven || cell.isCorrect) return;
 
     cell.value = element;
-    lastAllianceMsg = null;
-    lastWasConflict = false;
 
     if (element == cell.solution) {
       _score += 10;
       _combo++;
       if (_combo >= 3) _score += 50;
-
       if (_isRowComplete(_selectedRow!)) _score += 100;
       if (_isColComplete(_selectedCol!)) _score += 100;
-
       _checkAlliances(_selectedRow!, _selectedCol!);
-      _checkConflict(_selectedRow!, _selectedCol!);
-      _checkComplete();
     } else {
-      _score = (_score - 20).clamp(0, 999999);
-      _combo = 0;
+      _score    = (_score - 20).clamp(0, 999999);
+      _combo    = 0;
+      _mistakes++;
+      // Check conflict visual even on wrong placement
+      _checkConflictNeighbors(_selectedRow!, _selectedCol!);
     }
 
+    _checkComplete();
     notifyListeners();
   }
 
@@ -151,7 +182,7 @@ class GameController extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------------
-  // Helpers
+  // Private helpers
   // ---------------------------------------------------------------------------
 
   bool _isRowComplete(int row) =>
@@ -171,25 +202,33 @@ class GameController extends ChangeNotifier {
       if (nc < 0 || nc >= _puzzle!.size) continue;
       final neighbor = _puzzle!.grid[nr][nc];
       if (neighbor.value == null) continue;
+
       final rel = elementRelation(cell.solution, neighbor.value!);
+
       if (rel == ElementRelation.alliance) {
-        final key =
-            '${row < nr ? row : nr},${col < nc ? col : nc}-${row > nr ? row : nr},${col > nc ? col : nc}';
+        // Normalise key so (0,1)-(0,2) == (0,2)-(0,1)
+        final minR = row < nr ? row : nr;
+        final minC = col < nc ? col : nc;
+        final maxR = row > nr ? row : nr;
+        final maxC = col > nc ? col : nc;
+        final key = '$minR,$minC-$maxR,$maxC';
         if (!_alliancePairs.contains(key)) {
           _alliancePairs.add(key);
           _score += 20;
-          lastAllianceMsg =
+          _pendingAllianceMsg =
               '${cell.solution.emoji}+${neighbor.value!.emoji} Alliance! +20';
         }
       }
+
       if (rel == ElementRelation.conflict) {
-        lastWasConflict = true;
+        _pendingConflict = true;
       }
     }
   }
 
-  void _checkConflict(int row, int col) {
+  void _checkConflictNeighbors(int row, int col) {
     final cell = _puzzle!.grid[row][col];
+    if (cell.value == null) return;
     const dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)];
     for (final (dr, dc) in dirs) {
       final nr = row + dr;
@@ -198,14 +237,15 @@ class GameController extends ChangeNotifier {
       if (nc < 0 || nc >= _puzzle!.size) continue;
       final neighbor = _puzzle!.grid[nr][nc];
       if (neighbor.value == null) continue;
-      if (elementRelation(cell.solution, neighbor.value!) ==
+      if (elementRelation(cell.value!, neighbor.value!) ==
           ElementRelation.conflict) {
-        lastWasConflict = true;
+        _pendingConflict = true;
         return;
       }
     }
   }
 
+  /// Returns the strongest elemental relation this cell has with any neighbor.
   ElementRelation neighborRelation(int row, int col) {
     final cell = _puzzle!.grid[row][col];
     if (cell.value == null) return ElementRelation.none;

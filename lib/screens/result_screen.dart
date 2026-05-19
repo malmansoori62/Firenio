@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../logic/game_controller.dart';
+import '../logic/progress_manager.dart';
+import '../models/difficulty.dart';
 import '../themes/app_theme.dart';
 import 'level_selection_screen.dart';
 
@@ -9,50 +11,63 @@ class ResultScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ctrl = context.watch<GameController>();
-    final puzzle = ctrl.puzzle!;
-    final stars = _starsForScore(ctrl.score);
-    final elapsed = ctrl.elapsed;
+    final ctrl     = context.watch<GameController>();
+    final progress = context.watch<ProgressManager>();
+    final puzzle   = ctrl.puzzle!;
+    final stars    = _starsForMistakes(ctrl.mistakes);
+    final streak   = progress.streak;
+    final elapsed  = ctrl.elapsed;
+    final multiplier = progress.streakMultiplierPercent();
+    final finalScore = (ctrl.score * multiplier ~/ 100);
 
     return Scaffold(
       backgroundColor: AppTheme.background,
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('⚡ Puzzle Complete! ⚡',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: AppTheme.textPrimary,
-                  )),
-              const SizedBox(height: 32),
+              const SizedBox(height: 16),
+              const Text(
+                'Puzzle Complete!',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 4),
+              if (streak >= 3)
+                Text(
+                  '🔥 Streak ×$streak   Score ×${multiplier ~/ 100}.${multiplier % 100 ~/ 10}!',
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: AppTheme.accentGold,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              const SizedBox(height: 24),
               // Stars
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                  3,
-                  (i) => Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Text(
-                      i < stars ? '⭐' : '☆',
-                      style: TextStyle(
-                        fontSize: 40,
-                        color: i < stars
-                            ? AppTheme.accentGold
-                            : AppTheme.textSecondary,
-                      ),
+                children: List.generate(3, (i) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    i < stars ? '⭐' : '☆',
+                    style: TextStyle(
+                      fontSize: 42,
+                      color: i < stars
+                          ? AppTheme.accentGold
+                          : AppTheme.textSecondary,
                     ),
                   ),
-                ),
+                )),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
               // Stats card
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   color: AppTheme.surface,
                   borderRadius: BorderRadius.circular(16),
@@ -60,50 +75,66 @@ class ResultScreen extends StatelessWidget {
                 ),
                 child: Column(
                   children: [
-                    _StatRow('Difficulty',
+                    _Row('Difficulty',
                         '${puzzle.difficulty.emoji} ${puzzle.difficulty.label}'),
-                    _StatRow('Grid', '${puzzle.size}×${puzzle.size}'),
-                    _StatRow('Final Score', '${ctrl.score}'),
-                    _StatRow(
+                    _Row('Grid', '${puzzle.size}×${puzzle.size}'),
+                    _Row('Base Score', '${ctrl.score}'),
+                    if (multiplier != 100)
+                      _Row('Streak Multiplier', '×${multiplier ~/ 100}.${multiplier % 100 ~/ 10}'),
+                    _Row('Final Score', '$finalScore',
+                        highlight: true),
+                    _Row('Mistakes', '${ctrl.mistakes}'),
+                    _Row(
                       'Time',
-                      '${elapsed.inMinutes.remainder(60).toString().padLeft(2, '0')}'
-                      ':${elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}',
+                      '${elapsed.inMinutes.remainder(60).toString().padLeft(2,'0')}'
+                      ':${elapsed.inSeconds.remainder(60).toString().padLeft(2,'0')}',
                     ),
-                    _StatRow('Hints Used', '${3 - ctrl.hints}'),
+                    _Row('Stars Earned', '⭐ ×$stars'),
+                    _Row('Total Stars', '⭐ ${progress.stars}'),
                   ],
                 ),
               ),
-              const SizedBox(height: 40),
+              const Spacer(),
               // Buttons
               Row(
                 children: [
                   Expanded(
-                    child: _ResultButton(
-                      label: '🔄 Play Again',
-                      isPrimary: false,
+                    child: _Btn(
+                      label: '🔄 Again',
                       onTap: () {
-                        ctrl.loadPuzzle(puzzle.difficulty);
+                        ctrl.loadPuzzle(puzzle.difficulty,
+                            levelNumber: ctrl.levelNumber ?? 1);
                         Navigator.of(context).pop();
                       },
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: _ResultButton(
-                      label: '📋 Levels',
-                      isPrimary: true,
+                    child: _Btn(
+                      label: '▶ Next',
+                      primary: true,
                       onTap: () {
-                        Navigator.of(context).pushAndRemoveUntil(
-                          MaterialPageRoute(
-                            builder: (_) => const LevelSelectionScreen(),
-                          ),
-                          (route) => route.isFirst,
-                        );
+                        final next = (ctrl.levelNumber ?? 1) + 1;
+                        ctrl.loadPuzzle(puzzle.difficulty, levelNumber: next);
+                        Navigator.of(context).pop();
                       },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _Btn(
+                      label: '📋 Levels',
+                      onTap: () => Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(
+                          builder: (_) => const LevelSelectionScreen(),
+                        ),
+                        (r) => r.isFirst,
+                      ),
                     ),
                   ),
                 ],
               ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
@@ -111,34 +142,34 @@ class ResultScreen extends StatelessWidget {
     );
   }
 
-  int _starsForScore(int score) {
-    if (score >= 500) return 3;
-    if (score >= 250) return 2;
-    if (score > 0) return 1;
-    return 0;
+  int _starsForMistakes(int m) {
+    if (m == 0) return 3;
+    if (m <= 2) return 2;
+    return 1;
   }
 }
 
-class _StatRow extends StatelessWidget {
+class _Row extends StatelessWidget {
   final String label;
   final String value;
+  final bool highlight;
 
-  const _StatRow(this.label, this.value);
+  const _Row(this.label, this.value, {this.highlight = false});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: AppTheme.subtitleStyle),
           Text(
             value,
-            style: const TextStyle(
-              color: AppTheme.textPrimary,
+            style: TextStyle(
+              color: highlight ? AppTheme.accentGold : AppTheme.textPrimary,
               fontWeight: FontWeight.w700,
-              fontSize: 15,
+              fontSize: highlight ? 17 : 15,
             ),
           ),
         ],
@@ -147,38 +178,29 @@ class _StatRow extends StatelessWidget {
   }
 }
 
-class _ResultButton extends StatelessWidget {
+class _Btn extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
-  final bool isPrimary;
+  final bool primary;
 
-  const _ResultButton({
-    required this.label,
-    required this.onTap,
-    this.isPrimary = false,
-  });
+  const _Btn({required this.label, required this.onTap, this.primary = false});
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        decoration: BoxDecoration(
-          color: isPrimary ? AppTheme.accent : AppTheme.surfaceAlt,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.textPrimary,
-            ),
-          ),
-        ),
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: BoxDecoration(
+        color: primary ? AppTheme.accent : AppTheme.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
       ),
-    );
-  }
+      child: Center(
+        child: Text(label,
+            style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.textPrimary)),
+      ),
+    ),
+  );
 }

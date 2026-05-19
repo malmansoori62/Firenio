@@ -5,24 +5,37 @@ import '../models/element_type.dart';
 import '../models/puzzle.dart';
 
 class PuzzleGenerator {
-  static final Random _rng = Random();
+  static Random _rng = Random();
 
-  static Puzzle generate(Difficulty difficulty) {
+  // Standard random puzzle
+  static Puzzle generate(Difficulty difficulty) =>
+      _build(difficulty, Random());
+
+  // Date-seeded puzzle — same result for every player on a given day
+  static Puzzle generateWithSeed(Difficulty difficulty, int seed) =>
+      _build(difficulty, Random(seed));
+
+  // ---------------------------------------------------------------------------
+
+  static Puzzle _build(Difficulty difficulty, Random rng) {
+    _rng = rng;
     final size = difficulty.gridSize;
     final (boxR, boxC) = difficulty.boxDimensions;
 
-    // Build a fully-solved grid, retry up to 20 times if needed
     List<List<int>>? solved;
-    for (int attempt = 0; attempt < 20; attempt++) {
+    for (int attempt = 0; attempt < 30; attempt++) {
       final g = List.generate(size, (_) => List.filled(size, 0));
       if (_backtrack(g, size, boxR, boxC)) {
         solved = g;
         break;
       }
     }
-    if (solved == null) throw StateError('Puzzle generation failed');
+    if (solved == null) throw StateError('Puzzle generation failed after 30 attempts');
 
-    // Decide which cells to expose as givens
+    // Validate the solved grid before using it
+    assert(_isSolvedGridValid(solved, size, boxR, boxC),
+        'Generated grid is invalid — bug in solver');
+
     final totalCells = size * size;
     final toRemove = (totalCells * difficulty.removalRate).round();
     final positions = [
@@ -64,10 +77,10 @@ class PuzzleGenerator {
             grid[r][c] = 0;
           }
         }
-        return false; // Dead end — trigger backtrack
+        return false;
       }
     }
-    return true; // All cells filled
+    return true;
   }
 
   static bool _isValid(
@@ -79,15 +92,12 @@ class PuzzleGenerator {
     int boxR,
     int boxC,
   ) {
-    // Row
     for (int j = 0; j < size; j++) {
       if (grid[r][j] == v) return false;
     }
-    // Column
     for (int i = 0; i < size; i++) {
       if (grid[i][c] == v) return false;
     }
-    // Box (only when box dimensions are defined)
     if (boxR > 0 && boxC > 0) {
       final sr = (r ~/ boxR) * boxR;
       final sc = (c ~/ boxC) * boxC;
@@ -98,5 +108,50 @@ class PuzzleGenerator {
       }
     }
     return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Validation helper (used in assertions & tests)
+  // ---------------------------------------------------------------------------
+
+  static bool _isSolvedGridValid(
+      List<List<int>> grid, int size, int boxR, int boxC) {
+    final expected = List.generate(size, (i) => i + 1).toSet();
+
+    // Rows
+    for (int r = 0; r < size; r++) {
+      if (grid[r].toSet() != expected) return false;
+    }
+    // Columns
+    for (int c = 0; c < size; c++) {
+      if (List.generate(size, (r) => grid[r][c]).toSet() != expected) {
+        return false;
+      }
+    }
+    // Boxes
+    if (boxR > 0 && boxC > 0) {
+      for (int br = 0; br < size ~/ boxR; br++) {
+        for (int bc = 0; bc < size ~/ boxC; bc++) {
+          final vals = <int>{};
+          for (int r = br * boxR; r < (br + 1) * boxR; r++) {
+            for (int c = bc * boxC; c < (bc + 1) * boxC; c++) {
+              vals.add(grid[r][c]);
+            }
+          }
+          if (vals != expected) return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /// Exposed for unit tests
+  static bool validatePuzzle(Puzzle p) {
+    final (boxR, boxC) = p.difficulty.boxDimensions;
+    final solved =
+        List.generate(p.size, (r) => List.generate(p.size, (c) {
+          return p.grid[r][c].solution.index + 1;
+        }));
+    return _isSolvedGridValid(solved, p.size, boxR, boxC);
   }
 }

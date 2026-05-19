@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../logic/game_controller.dart';
+import '../logic/progress_manager.dart';
 import '../models/difficulty.dart';
 import '../themes/app_theme.dart';
 import 'game_screen.dart';
@@ -15,12 +16,11 @@ class LevelSelectionScreen extends StatefulWidget {
 class _LevelSelectionScreenState extends State<LevelSelectionScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
-  final difficulties = Difficulty.values;
 
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: difficulties.length, vsync: this);
+    _tab = TabController(length: Difficulty.values.length, vsync: this);
   }
 
   @override
@@ -40,14 +40,14 @@ class _LevelSelectionScreenState extends State<LevelSelectionScreen>
           indicatorColor: AppTheme.accent,
           labelColor: AppTheme.accent,
           unselectedLabelColor: AppTheme.textSecondary,
-          tabs: difficulties
+          tabs: Difficulty.values
               .map((d) => Tab(text: '${d.emoji} ${d.label}'))
               .toList(),
         ),
       ),
       body: TabBarView(
         controller: _tab,
-        children: difficulties
+        children: Difficulty.values
             .map((d) => _LevelGrid(difficulty: d))
             .toList(),
       ),
@@ -57,12 +57,12 @@ class _LevelSelectionScreenState extends State<LevelSelectionScreen>
 
 class _LevelGrid extends StatelessWidget {
   final Difficulty difficulty;
-
   const _LevelGrid({required this.difficulty});
 
   @override
   Widget build(BuildContext context) {
-    const levelCount = 20;
+    const levels = 20;
+    final progress = context.watch<ProgressManager>();
 
     return GridView.builder(
       padding: const EdgeInsets.all(16),
@@ -71,11 +71,18 @@ class _LevelGrid extends StatelessWidget {
         mainAxisSpacing: 12,
         crossAxisSpacing: 12,
       ),
-      itemCount: levelCount,
-      itemBuilder: (ctx, i) => _LevelCard(
-        level: i + 1,
-        difficulty: difficulty,
-      ),
+      itemCount: levels,
+      itemBuilder: (ctx, i) {
+        final level = i + 1;
+        final done  = progress.isCompleted(difficulty, level);
+        final hs    = progress.highScore(difficulty, level);
+        return _LevelCard(
+          level: level,
+          difficulty: difficulty,
+          isCompleted: done,
+          highScore: hs,
+        );
+      },
     );
   }
 }
@@ -83,50 +90,76 @@ class _LevelGrid extends StatelessWidget {
 class _LevelCard extends StatelessWidget {
   final int level;
   final Difficulty difficulty;
+  final bool isCompleted;
+  final int? highScore;
 
-  const _LevelCard({required this.level, required this.difficulty});
+  const _LevelCard({
+    required this.level,
+    required this.difficulty,
+    required this.isCompleted,
+    this.highScore,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => _startLevel(context),
+      onTap: () => _start(context),
       child: Container(
         decoration: BoxDecoration(
-          color: AppTheme.surfaceAlt,
+          color: isCompleted
+              ? AppTheme.correctGreen.withOpacity(0.15)
+              : AppTheme.surfaceAlt,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: AppTheme.surfaceAlt,
+            color: isCompleted
+                ? AppTheme.correctGreen.withOpacity(0.6)
+                : Colors.transparent,
             width: 1.5,
           ),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              '$level',
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.textPrimary,
+            if (isCompleted)
+              const Text('✅', style: TextStyle(fontSize: 14))
+            else
+              Text(
+                '$level',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary,
+                ),
               ),
-            ),
-            Text(
-              difficulty.emoji,
-              style: const TextStyle(fontSize: 12),
-            ),
+            if (highScore != null)
+              Text(
+                '$highScore',
+                style: const TextStyle(
+                  fontSize: 9,
+                  color: AppTheme.accentGold,
+                ),
+              )
+            else
+              Text(
+                difficulty.emoji,
+                style: const TextStyle(fontSize: 10),
+              ),
           ],
         ),
       ),
     );
   }
 
-  void _startLevel(BuildContext context) {
-    final ctrl = context.read<GameController>();
-    ctrl.loadPuzzle(difficulty);
-    Navigator.of(context).push(
+  void _start(BuildContext ctx) {
+    final ctrl = ctx.read<GameController>();
+    ctrl.loadPuzzle(difficulty, levelNumber: level);
+    Navigator.of(ctx).push(
       MaterialPageRoute(
-        builder: (_) => ChangeNotifierProvider.value(
-          value: ctrl,
+        builder: (_) => MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: ctrl),
+            ChangeNotifierProvider.value(value: ctx.read<ProgressManager>()),
+          ],
           child: const GameScreen(),
         ),
       ),
