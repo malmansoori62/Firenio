@@ -45,7 +45,7 @@ jobs:
         run: flutter pub get
 
       - name: Generate Android project files
-        run: flutter create --platforms android --org com.example .
+        run: flutter create --platforms android --org com.example --project-name elements_grid .
 
       - name: Build debug APK
         run: flutter build apk --debug
