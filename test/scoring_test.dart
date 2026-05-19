@@ -109,8 +109,7 @@ void main() {
       ctrl.selectCell(r, c);
       ctrl.placeElement(_otherElement(solution));
       expect(ctrl.puzzle!.grid[r][c].value, isNotNull);
-
-      ctrl.selectCell(r, c);
+      // placeElement leaves the cell selected — clear it directly
       ctrl.clearCell();
       expect(ctrl.puzzle!.grid[r][c].value, isNull);
     });
